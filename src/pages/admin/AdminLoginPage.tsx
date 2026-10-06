@@ -6,8 +6,17 @@
 import React, { useState } from 'react';
 import { RestaurantLogo } from '../../components/common/RestaurantLogo';
 import { authService } from '../../services/auth';
-import { Lock, Mail, ArrowRight, ArrowLeft, AlertCircle, Info, ShieldCheck } from 'lucide-react';
-import { isSupabaseConfigured } from '../../lib/supabase';
+import {
+  Lock,
+  Mail,
+  ArrowRight,
+  ArrowLeft,
+  AlertCircle,
+  ShieldCheck,
+  Eye,
+  EyeOff,
+  UserCheck,
+} from 'lucide-react';
 
 interface AdminLoginPageProps {
   onLoginSuccess: () => void;
@@ -18,36 +27,59 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
   onLoginSuccess,
   onBackToSite,
 }) => {
+  const isFirstTimeSetup = !authService.hasConfiguredCredentials();
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-
-  const demoCreds = authService.getDefaultDemoCredentials();
-  const supabaseActive = isSupabaseConfigured();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMessage(null);
-    setIsLoading(true);
 
+    if (isFirstTimeSetup) {
+      if (password !== confirmPassword) {
+        setErrorMessage('Passwords do not match. Please re-enter.');
+        return;
+      }
+      if (password.length < 6) {
+        setErrorMessage('Password must be at least 6 characters long.');
+        return;
+      }
+
+      setIsLoading(true);
+      try {
+        const res = await authService.setupInitialCredentials(email, password);
+        if (res.success) {
+          onLoginSuccess();
+        } else {
+          setErrorMessage(res.error || 'Failed to initialize owner account.');
+        }
+      } catch {
+        setErrorMessage('An error occurred during account setup. Please try again.');
+      } finally {
+        setIsLoading(false);
+      }
+      return;
+    }
+
+    // Standard Sign In
+    setIsLoading(true);
     try {
       const res = await authService.login(email, password);
       if (res.success) {
         onLoginSuccess();
       } else {
-        setErrorMessage(res.error || 'Authentication failed. Please check your credentials.');
+        setErrorMessage(res.error || 'Invalid credentials. Access restricted.');
       }
     } catch {
-      setErrorMessage('A network error occurred. Please try again.');
+      setErrorMessage('Network verification failed. Please try again.');
     } finally {
       setIsLoading(false);
     }
-  };
-
-  const fillDemoCredentials = () => {
-    setEmail(demoCreds.email);
-    setPassword(demoCreds.initialPasswordHint);
   };
 
   return (
@@ -72,11 +104,22 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
           <div className="flex flex-col items-center text-center mb-8">
             <RestaurantLogo variant="light" size="lg" />
             <div className="mt-4 inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-[#14452f] border border-[#c5a869]/30 text-[11px] font-semibold tracking-wider text-[#c5a869] uppercase">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>Owner Management Portal</span>
+              {isFirstTimeSetup ? (
+                <>
+                  <UserCheck className="w-3.5 h-3.5" />
+                  <span>First-Time Owner Setup</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="w-3.5 h-3.5" />
+                  <span>Confidential Owner Portal</span>
+                </>
+              )}
             </div>
             <p className="text-xs text-[#a0c2b0] mt-2">
-              Sign in with your verified owner credentials to manage the restaurant CMS.
+              {isFirstTimeSetup
+                ? 'Create your private owner email and password to secure this management console.'
+                : 'Enter your confidential administrator credentials to access the CMS.'}
             </p>
           </div>
 
@@ -106,7 +149,7 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                   required
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
-                  placeholder="e.g. owner@greenfamilyrestaurant.com"
+                  placeholder="admin@your-restaurant.com"
                   className="w-full pl-10 pr-3.5 py-2.5 text-xs bg-[#092014] border border-[#14452f] rounded-lg text-white placeholder-[#587e6b] focus:outline-none focus:ring-1 focus:ring-[#c5a869] focus:border-[#c5a869]"
                 />
               </div>
@@ -117,22 +160,58 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
                 htmlFor="admin-password"
                 className="block text-xs font-semibold uppercase tracking-wider text-[#d0e2d8] mb-1.5"
               >
-                Owner Password
+                {isFirstTimeSetup ? 'Create Secret Password' : 'Password'}
               </label>
               <div className="relative">
                 <Lock className="w-4 h-4 text-[#719b84] absolute left-3.5 top-1/2 -translate-y-1/2" />
                 <input
                   id="admin-password"
-                  type="password"
-                  autoComplete="current-password"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete={isFirstTimeSetup ? 'new-password' : 'current-password'}
                   required
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••••••"
-                  className="w-full pl-10 pr-3.5 py-2.5 text-xs bg-[#092014] border border-[#14452f] rounded-lg text-white placeholder-[#587e6b] focus:outline-none focus:ring-1 focus:ring-[#c5a869] focus:border-[#c5a869]"
+                  className="w-full pl-10 pr-10 py-2.5 text-xs bg-[#092014] border border-[#14452f] rounded-lg text-white placeholder-[#587e6b] focus:outline-none focus:ring-1 focus:ring-[#c5a869] focus:border-[#c5a869]"
                 />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#719b84] hover:text-[#c5a869] transition-colors p-1"
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? (
+                    <EyeOff className="w-4 h-4" />
+                  ) : (
+                    <Eye className="w-4 h-4" />
+                  )}
+                </button>
               </div>
             </div>
+
+            {isFirstTimeSetup && (
+              <div>
+                <label
+                  htmlFor="confirm-password"
+                  className="block text-xs font-semibold uppercase tracking-wider text-[#d0e2d8] mb-1.5"
+                >
+                  Confirm Secret Password
+                </label>
+                <div className="relative">
+                  <Lock className="w-4 h-4 text-[#719b84] absolute left-3.5 top-1/2 -translate-y-1/2" />
+                  <input
+                    id="confirm-password"
+                    type={showPassword ? 'text' : 'password'}
+                    autoComplete="new-password"
+                    required
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="••••••••••••"
+                    className="w-full pl-10 pr-3.5 py-2.5 text-xs bg-[#092014] border border-[#14452f] rounded-lg text-white placeholder-[#587e6b] focus:outline-none focus:ring-1 focus:ring-[#c5a869] focus:border-[#c5a869]"
+                  />
+                </div>
+              </div>
+            )}
 
             <button
               type="submit"
@@ -140,7 +219,12 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
               className="w-full flex items-center justify-center gap-2 py-3 px-4 text-xs font-bold tracking-widest text-[#07170f] bg-[#c5a869] hover:bg-[#d8bd7e] active:bg-[#b09355] rounded-lg shadow-md transition-all duration-150 disabled:opacity-50"
             >
               {isLoading ? (
-                <span>VERIFYING CREDENTIALS...</span>
+                <span>AUTHENTICATING...</span>
+              ) : isFirstTimeSetup ? (
+                <>
+                  <span>CREATE OWNER CREDENTIALS & ENTER</span>
+                  <ArrowRight className="w-4 h-4" />
+                </>
               ) : (
                 <>
                   <span>SIGN IN TO DASHBOARD</span>
@@ -150,30 +234,11 @@ export const AdminLoginPage: React.FC<AdminLoginPageProps> = ({
             </button>
           </form>
 
-          {/* Quick Demo Credentials Assistant */}
+          {/* Confidentiality Notice */}
           <div className="mt-8 pt-6 border-t border-[#14452f] text-center">
-            <div className="flex items-center justify-between text-[11px] text-[#86a895] mb-2">
-              <span className="flex items-center gap-1">
-                <Info className="w-3.5 h-3.5 text-[#c5a869]" />
-                <span>
-                  {supabaseActive ? 'Supabase Auth Connected' : 'Initial Owner Credentials'}
-                </span>
-              </span>
-              <button
-                type="button"
-                onClick={fillDemoCredentials}
-                className="text-[#c5a869] hover:underline font-semibold"
-              >
-                Auto-fill
-              </button>
-            </div>
-            <p className="text-[10px] text-[#6d917d] leading-relaxed text-left font-mono bg-[#092014] p-2.5 rounded border border-[#14452f]/60">
-              Email: {demoCreds.email}
-              <br />
-              Initial Pass: {demoCreds.initialPasswordHint}
-            </p>
-            <p className="text-[10px] text-[#6d917d] mt-2 italic">
-              You can change this password at any time in Admin Settings.
+            <p className="text-[11px] text-[#6d917d] flex items-center justify-center gap-1.5">
+              <ShieldCheck className="w-3.5 h-3.5 text-[#c5a869]" />
+              <span>Strictly restricted to authorized restaurant administration.</span>
             </p>
           </div>
         </div>

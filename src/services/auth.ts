@@ -10,9 +10,10 @@ const AUTH_STORAGE_KEYS = {
   SESSION_TOKEN: 'gfr_admin_session_token_v1',
   USER_DATA: 'gfr_admin_user_data_v1',
   AUTH_CREDS_HASH: 'gfr_owner_creds_hash_v1',
+  OWNER_EMAIL: 'gfr_owner_email_v1',
 };
 
-// SHA-256 hasher for client verification without plaintext storage
+// SHA-256 cryptographic hash helper
 async function sha256(message: string): Promise<string> {
   const msgBuffer = new TextEncoder().encode(message);
   const hashBuffer = await crypto.subtle.digest('SHA-256', msgBuffer);
@@ -20,22 +21,66 @@ async function sha256(message: string): Promise<string> {
   return hashArray.map((b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-// Generate default owner hash dynamically if not present
-// Default initial owner setup for Green Family Restaurant CMS
-const DEFAULT_OWNER_EMAIL = 'owner@greenfamilyrestaurant.com';
-const DEFAULT_INITIAL_SEED = 'green_owner_2026';
-
 export const authService = {
-  async initDefaultOwner(): Promise<void> {
-    const existing = localStorage.getItem(AUTH_STORAGE_KEYS.AUTH_CREDS_HASH);
-    if (!existing) {
-      // Hash: sha256(email + ":" + password)
-      const defaultHash = await sha256(`${DEFAULT_OWNER_EMAIL}:${DEFAULT_INITIAL_SEED}`);
-      localStorage.setItem(AUTH_STORAGE_KEYS.AUTH_CREDS_HASH, defaultHash);
-    }
+  hasConfiguredCredentials(): boolean {
+    if (isSupabaseConfigured()) return true;
+    const storedHash = localStorage.getItem(AUTH_STORAGE_KEYS.AUTH_CREDS_HASH);
+    return Boolean(storedHash && storedHash.length > 10);
   },
 
-  async login(email: string, password: string):Promise<{ success: boolean; user?: AdminUser; error?: string }> {
+  async setupInitialCredentials(email: string, password: string): Promise<{ success: boolean; user?: AdminUser; error?: string }> {
+    const cleanEmail = email.trim().toLowerCase();
+    const cleanPass = password.trim();
+
+    if (!cleanEmail || !cleanPass) {
+      return { success: false, error: 'Email and password are required.' };
+    }
+    if (cleanPass.length < 6) {
+      return { success: false, error: 'Password must be at least 6 characters.' };
+    }
+
+    if (isSupabaseConfigured() && supabase) {
+      try {
+        const { data, error } = await supabase.auth.signUp({
+          email: cleanEmail,
+          password: cleanPass,
+        });
+        if (error) return { success: false, error: error.message };
+        if (data?.user) {
+          const user: AdminUser = {
+            id: data.user.id,
+            email: data.user.email || cleanEmail,
+            name: 'Restaurant Owner',
+            role: 'owner',
+          };
+          sessionStorage.setItem(AUTH_STORAGE_KEYS.SESSION_TOKEN, data.session?.access_token || 'supabase_token');
+          sessionStorage.setItem(AUTH_STORAGE_KEYS.USER_DATA, JSON.stringify(user));
+          return { success: true, user };
+        }
+      } catch (err: unknown) {
+        console.warn('Supabase sign-up attempt error:', err);
+      }
+    }
+
+    // Save secret cryptographic hash to local storage
+    const hash = await sha256(`${cleanEmail}:${cleanPass}`);
+    localStorage.setItem(AUTH_STORAGE_KEYS.AUTH_CREDS_HASH, hash);
+    localStorage.setItem(AUTH_STORAGE_KEYS.OWNER_EMAIL, cleanEmail);
+
+    const user: AdminUser = {
+      id: 'owner_master_id',
+      email: cleanEmail,
+      name: 'Restaurant Owner',
+      role: 'owner',
+    };
+    const sessionToken = `token_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+    sessionStorage.setItem(AUTH_STORAGE_KEYS.SESSION_TOKEN, sessionToken);
+    sessionStorage.setItem(AUTH_STORAGE_KEYS.USER_DATA, JSON.stringify(user));
+
+    return { success: true, user };
+  },
+
+  async login(email: string, password: string): Promise<{ success: boolean; user?: AdminUser; error?: string }> {
     const cleanEmail = email.trim().toLowerCase();
     const cleanPass = password.trim();
 
@@ -71,8 +116,7 @@ export const authService = {
       }
     }
 
-    // 2. Verified Hash Auth for Owner CMS
-    await this.initDefaultOwner();
+    // 2. Hash verification
     const inputHash = await sha256(`${cleanEmail}:${cleanPass}`);
     const storedHash = localStorage.getItem(AUTH_STORAGE_KEYS.AUTH_CREDS_HASH);
 
@@ -91,7 +135,7 @@ export const authService = {
 
     return {
       success: false,
-      error: 'Invalid credentials. Please verify your email and password.',
+      error: 'Invalid email or password. Access restricted to restaurant owner.',
     };
   },
 
@@ -140,8 +184,8 @@ export const authService = {
 
     const newHash = await sha256(`${cleanEmail}:${cleanPass}`);
     localStorage.setItem(AUTH_STORAGE_KEYS.AUTH_CREDS_HASH, newHash);
+    localStorage.setItem(AUTH_STORAGE_KEYS.OWNER_EMAIL, cleanEmail);
 
-    // Update active user data
     const user: AdminUser = {
       id: 'owner_master_id',
       email: cleanEmail,
@@ -150,12 +194,5 @@ export const authService = {
     };
     sessionStorage.setItem(AUTH_STORAGE_KEYS.USER_DATA, JSON.stringify(user));
     return true;
-  },
-
-  getDefaultDemoCredentials() {
-    return {
-      email: DEFAULT_OWNER_EMAIL,
-      initialPasswordHint: DEFAULT_INITIAL_SEED,
-    };
   },
 };
